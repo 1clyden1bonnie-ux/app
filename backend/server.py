@@ -117,51 +117,19 @@ async def generate_text_content(request: ProductGenerate):
 @api_router.post("/generate/image")
 async def generate_image_content(request: ProductGenerate):
     """Generate image using AI"""
+    from ai_helpers import generate_with_openai, generate_with_gemini, create_product_data
+    
     try:
+        # Generate image based on AI model
         if request.ai_model == "openai":
             api_key = os.getenv("OPENAI_API_KEY")
-            image_gen = OpenAIImageGeneration(api_key=api_key)
-            images = await image_gen.generate_images(
-                prompt=request.prompt,
-                model="gpt-image-1",
-                number_of_images=1
-            )
-            
-            if images and len(images) > 0:
-                image_base64 = base64.b64encode(images[0]).decode('utf-8')
-            else:
-                raise HTTPException(status_code=500, detail="No image generated")
-                
-        else:  # Gemini
+            image_base64 = await generate_with_openai(api_key, request.prompt)
+        else:
             api_key = os.getenv("GENAI_API_KEY")
-            chat = LlmChat(
-                api_key=api_key,
-                session_id=str(uuid.uuid4()),
-                system_message="You are an AI image generator"
-            )
-            chat.with_model("gemini", "gemini-3.1-flash-image-preview").with_params(modalities=["image", "text"])
-            
-            msg = UserMessage(text=request.prompt)
-            text, images = await chat.send_message_multimodal_response(msg)
-            
-            if images and len(images) > 0:
-                image_base64 = images[0]['data']
-            else:
-                raise HTTPException(status_code=500, detail="No image generated")
+            image_base64 = await generate_with_gemini(api_key, request.prompt)
         
-        # Save to database
-        product_data = {
-            "id": str(uuid.uuid4()),
-            "name": f"AI Art - {datetime.now().strftime('%Y%m%d_%H%M%S')}",
-            "description": request.prompt[:200],
-            "product_type": "image",
-            "content": image_base64,
-            "price": 19.99,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "listed_on": [],
-            "status": "draft"
-        }
-        
+        # Create and save product
+        product_data = create_product_data("image", request.prompt, image_base64, 19.99)
         await db.products.insert_one(product_data)
         
         return {
@@ -171,6 +139,9 @@ async def generate_image_content(request: ProductGenerate):
             "message": "Image generated successfully"
         }
         
+    except ValueError as e:
+        logger.error(f"Image generation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         logger.error(f"Image generation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -227,28 +198,16 @@ async def delete_product(product_id: str):
 @api_router.post("/list-product")
 async def list_product(request: ListingRequest, background_tasks: BackgroundTasks):
     """List product on selected platforms"""
+    from marketplace_helpers import list_on_multiple_platforms
+    
     try:
+        # Fetch product
         product = await db.products.find_one({"id": request.product_id}, {"_id": 0})
         if not product:
             raise HTTPException(status_code=404, detail="Product not found")
         
-        listed_platforms = []
-        
-        for platform in request.platforms:
-            if platform == "etsy":
-                # Etsy listing would go here
-                listed_platforms.append("etsy")
-                logger.info(f"Listed on Etsy: {product['name']}")
-                
-            elif platform == "shopify":
-                # Shopify listing would go here
-                listed_platforms.append("shopify")
-                logger.info(f"Listed on Shopify: {product['name']}")
-                
-            elif platform == "gumroad":
-                # Gumroad listing would go here
-                listed_platforms.append("gumroad")
-                logger.info(f"Listed on Gumroad: {product['name']}")
+        # List on platforms
+        listed_platforms = await list_on_multiple_platforms(request.platforms, product)
         
         # Update product status
         await db.products.update_one(
