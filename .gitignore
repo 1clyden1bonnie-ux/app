@@ -94,3 +94,7 @@ android-sdk/-e
 backend/.env
 frontend/.env
 **/.env
+-e 
+# Environment files
+*.env
+*.env.*
